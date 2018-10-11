@@ -3,15 +3,14 @@
 ## Examples
 
 ```python
-from address_formatter import Address
-a = Address(city='Wellington',
-            road='Pirie Street',
-            house_number=53,
-            suburb='Mount Vic',
-            postcode='6011',
-            country_code='NZ')
+from address_formatter import format
           
-print(a.format())
+address = format(city='Wellington',
+                 road='Pirie Street',
+                 house_number=53,
+                 suburb='Mount Vic',
+                 postcode='6011',
+                 country_code='NZ')
 ```
 
 List of valid address components:

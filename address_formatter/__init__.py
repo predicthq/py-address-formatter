@@ -1,1 +1,1 @@
-from .formatter import Address
+from .formatter import format

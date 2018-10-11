@@ -1,6 +1,6 @@
 import os
 import yaml
-from address_formatter import Address
+from address_formatter import format
 
 path = os.path.join('address-formatter-templates', 'testcases', 'countries')
 test_files = sorted(filter(os.path.isfile, [os.path.join(path, file) for file in os.listdir(path)]))
@@ -14,5 +14,5 @@ for test_file in test_files:
         for test_case in test_cases:
             print('Components: ' + str(test_case['components']))
             print('')
-            address = Address(**test_case['components'])
-            print(address.format())
+            address = format(**test_case['components'])
+            print(address)

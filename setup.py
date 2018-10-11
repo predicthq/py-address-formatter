@@ -22,6 +22,7 @@ setup(name='py-address-formatter',
       ],
       install_requires=[
         'chevron==0.13.1',
+        'namedlist==1.7',
         'pyyaml==3.13'
       ],
       packages=find_packages(),

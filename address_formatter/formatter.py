@@ -2,7 +2,7 @@ from os import path
 import re
 from functools import partial, reduce
 import chevron
-import yaml
+from .config import load_config
 
 REQUIRED_ADDRESS_COMPONENTS = [
     'road',
@@ -12,6 +12,8 @@ REQUIRED_ADDRESS_COMPONENTS = [
 VALID_REPLACEMENT_COMPONENTS = [
     'state'
 ]
+
+CONFIG = load_config(path.abspath(path.join(path.dirname(__file__), '..', 'address-formatter-templates', 'conf')))
 
 
 def _dedup(splitter, input_string):
@@ -97,6 +99,54 @@ def _find_and_add_unknown_components(components, component_aliases, addr_compone
     return updated_addr_components
 
 
+def _determine_country_code(addr_components):
+    updated_addr_components = addr_components.copy()
+
+    cc = updated_addr_components.get('country_code', '')
+    if len(cc) != 2:
+        return cc, updated_addr_components
+
+    country_code = cc.upper()
+
+    if country_code == 'UK':
+        country_code = 'GB'
+
+    # Check if the configuration tells us to use the configuration of another country
+    # Used in cases of dependent territories like American Samoa (AS) and Puerto Rico (PR)
+    if CONFIG.templates.get(country_code) and CONFIG.templates[country_code].get('use_country'):
+        old_country_code = country_code
+        country_code = CONFIG.templates[country_code]['use_country']
+
+        if CONFIG.templates[old_country_code].get('change_country'):
+            new_country = CONFIG.templates[old_country_code]['change_country']
+
+            matches = re.match(r'\$(\w*)', new_country)
+            if matches:
+                component = matches[1]
+                new_country = re.sub(r'\$' + component, updated_addr_components.get(component, ''), new_country)
+
+                updated_addr_components['country'] = new_country
+
+        if CONFIG.templates[old_country_code].get('add_component') and \
+                '=' in CONFIG.templates[old_country_code]['add_component']:
+            key, val = CONFIG.templates[old_country_code]['add_component'].split('=')
+            if key in VALID_REPLACEMENT_COMPONENTS:
+                updated_addr_components[key] = val
+
+    if country_code == 'NL' and updated_addr_components.get('state'):
+        if updated_addr_components['state'] == 'Curaçao':
+            country_code = 'CW'
+            updated_addr_components['country'] = 'Curaçao'
+        elif re.match(r'^sint maarten', updated_addr_components['state'], re.IGNORECASE):
+            country_code = 'SX'
+            updated_addr_components['country'] = 'Sint Maarten'
+        elif re.match(r'^Aruba', updated_addr_components['state'], re.IGNORECASE):
+            country_code = 'AW'
+            updated_addr_components['country'] = 'Aruba'
+
+    return country_code, updated_addr_components
+
+
 def _clean_rendered(text):
     replacements = [
         (r'[\},\s]+$', ''),
@@ -127,8 +177,8 @@ def _clean_rendered(text):
 
 
 def _render(template_text, addr_components):
-    def first(context, text, render):
-        new_text = render(text, context)
+    def first(ctx, txt, render):
+        new_text = render(txt, ctx)
         return next((x.strip() for x in new_text.split('||') if x.strip()), '')
 
     context = addr_components.copy()
@@ -141,7 +191,7 @@ def _render(template_text, addr_components):
 
     # Just in case we dont have anything
     # TODO we probably need a better logic than this
-    values = filter(None, map(str, addr_components.values))
+    values = filter(None, map(str, addr_components.values()))
     text = _clean_rendered(', '.join(values))
     return text
 
@@ -155,131 +205,54 @@ def _post_format_replace(text, replacements):
     return _clean_rendered(dedup_text)
 
 
-class Address:
-    def __init__(self, **kwargs):
-        self._templates = {}
-        self._component_aliases = {}
-        self._components = {}
-        self._state_codes = {}
-        self._load_template()
+def format(**components):
+    addr_components = {}
+    all_known_components = list(CONFIG.components.keys()) + list(CONFIG.component_aliases.keys())
+    if components:
+        addr_components.update((k, str(components[k])) for k in set(components).intersection(all_known_components))
 
-        self._addr_components = {}
-        all_known_components = list(self._components.keys()) + list(self._component_aliases.keys())
-        if kwargs:
-            self._addr_components.update((k, str(kwargs[k])) for k in set(kwargs).intersection(all_known_components))
+    assert addr_components, \
+        'Address is empty, please set one or more of the following components: {}'.format(
+            ', '.join(sorted(all_known_components)))
 
-        assert self._addr_components, \
-            'Address is empty, please set one or more of the following components: {}'.format(
-                ', '.join(sorted(all_known_components)))
+    country_code, addr_components = _determine_country_code(addr_components)
 
-    def _load_template(self):
-        template_path = path.abspath(path.join(path.dirname(__file__), '..', 'address-formatter-templates', 'conf'))
-        if not path.isdir(template_path):
-            raise IOError('Address formatting templates path cannot be found.')
+    if country_code:
+        country_code = country_code.upper()
+        addr_components['country_code'] = country_code
 
-        # Parse components and component aliases
-        with open(path.join(template_path, 'components.yaml'), 'r') as ymlfile:
-            components = yaml.safe_load_all(ymlfile)
+    # Set the alias values (unless it would override something)
+    for k, v in CONFIG.component_aliases.items():
+        if addr_components.get(k) and not addr_components.get(v):
+            addr_components[v] = addr_components[k]
 
-            for component in components:
-                if 'aliases' in component:
-                    self._component_aliases.update({alias: component['name'] for alias in component['aliases']})
-                self._components[component['name']] = component.get('aliases')
+    addr_components = _sanity_clean_address(addr_components)
 
-        # Parse templates
-        with open(path.join(template_path, 'countries', 'worldwide.yaml'), 'r') as ymlfile:
-            self._templates = yaml.safe_load(ymlfile)
+    template = CONFIG.templates.get(country_code) or CONFIG.templates['default']
+    template_text = template.get('address_template', '')
 
-        # Parse state codes
-        with open(path.join(template_path, 'state_codes.yaml'), 'r') as ymlfile:
-            self._state_codes = yaml.safe_load(ymlfile)
+    # Do we have the minimal components for an address? or should we instead use the fallback template?
+    if not _has_minimum_address_components(addr_components):
+        if template.get('fallback_template'):
+            template_text = template['fallback_template']
+        elif CONFIG.templates['default'].get('fallback_template'):
+            template_text = CONFIG.templates['default']['fallback_template']
 
-    def _determine_country_code(self):
-        cc = self._addr_components.get('country_code', '')
-        if len(cc) != 2:
-            return cc
+    # Cleanup the components by applying list of cleanup functions
+    addr_components = reduce(lambda c, func: func(c),
+                             [
+                                 _fix_country,
+                                 partial(_apply_replacements, template.get('replace')),
+                                 partial(_add_state_code, CONFIG.state_codes),
+                                 partial(_find_and_add_unknown_components, CONFIG.components, CONFIG.component_aliases)
+                             ],
+                             addr_components)
 
-        country_code = cc.upper()
+    # Render the template
+    text = _render(template_text, addr_components)
 
-        if country_code == 'UK':
-            country_code = 'GB'
+    # Post render cleanup
+    if template.get('postformat_replace'):
+        text = _post_format_replace(text, template['postformat_replace'])
 
-        # Check if the configuration tells us to use the configuration of another country
-        # Used in cases of dependent territories like American Samoa (AS) and Puerto Rico (PR)
-        if self._templates.get(country_code) and self._templates[country_code].get('use_country'):
-            old_country_code = country_code
-            country_code = self._templates[country_code]['use_country']
-
-            if self._templates[old_country_code].get('change_country'):
-                new_country = self._templates[old_country_code]['change_country']
-
-                matches = re.match(r'\$(\w*)', new_country)
-                if matches:
-                    component = matches[1]
-                    new_country = re.sub(r'\$' + component, self._addr_components.get(component, ''), new_country)
-
-                self._addr_components['country'] = new_country
-
-            if self._templates[old_country_code].get('add_component') and \
-                    '=' in self._templates[old_country_code]['add_component']:
-                key, val = self._templates[old_country_code]['add_component'].split('=')
-                if key in VALID_REPLACEMENT_COMPONENTS:
-                    self._addr_components[key] = val
-
-        if country_code == 'NL' and self._addr_components.get('state'):
-            if self._addr_components['state'] == 'Curaçao':
-                country_code = 'CW'
-                self._addr_components['country'] = 'Curaçao'
-            elif re.match(r'^sint maarten', self._addr_components['state'], re.IGNORECASE):
-                country_code = 'SX'
-                self._addr_components['country'] = 'Sint Maarten'
-            elif re.match(r'^Aruba', self._addr_components['state'], re.IGNORECASE):
-                country_code = 'AW'
-                self._addr_components['country'] = 'Aruba'
-
-        return country_code
-
-    def format(self, opts=None):
-        country_code = opts['country'] if isinstance(opts, dict) and 'country' in opts \
-            else self._determine_country_code()
-
-        if country_code:
-            country_code = country_code.upper()
-            self._addr_components['country_code'] = country_code
-
-        # Set the alias values (unless it would override something)
-        for k, v in self._component_aliases.items():
-            if self._addr_components.get(k) and not self._addr_components.get(v):
-                self._addr_components[v] = self._addr_components[k]
-
-        self._addr_components = _sanity_clean_address(self._addr_components)
-
-        template = self._templates.get(country_code) or self._templates['default']
-        template_text = template.get('address_template', '')
-
-        # Do we have the minimal components for an address? or should we instead use the fallback template?
-        if not _has_minimum_address_components(self._addr_components):
-            if template.get('fallback_template'):
-                template_text = template['fallback_template']
-            elif self._templates['default'].get('fallback_template'):
-                template_text = self._templates['default']['fallback_template']
-
-        # Cleanup the components by applying list of cleanup functions
-        self._addr_components = reduce(lambda components, func: func(components),
-                                       [
-                                           _fix_country,
-                                           partial(_apply_replacements, template.get('replace')),
-                                           partial(_add_state_code, self._state_codes),
-                                           partial(_find_and_add_unknown_components, self._components,
-                                                   self._component_aliases)
-                                       ],
-                                       self._addr_components)
-
-        # Render the template
-        text = _render(template_text, self._addr_components)
-
-        # Post render cleanup
-        if template.get('postformat_replace'):
-            text = _post_format_replace(text, template['postformat_replace'])
-
-        return text
+    return text
