@@ -20,6 +20,10 @@ setup(name='py-address-formatter',
           'Topic :: Text Processing :: General',
           'Operating System :: POSIX :: Linux'
       ],
+      install_requires=[
+        'chevron==0.13.1',
+        'pyyaml==3.13'
+      ],
       packages=find_packages(),
       dependency_links=[],
       test_suite='tests',
