@@ -1,0 +1,4 @@
+[submodule "address-formatter-templates"]
+	path = address-formatter-templates
+	url = git@github.com:predicthq/address-formatter-templates.git
+	branch = master
