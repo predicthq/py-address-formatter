@@ -169,7 +169,7 @@ class Address:
             self._addr_components.update((k, str(kwargs[k])) for k in set(kwargs).intersection(all_known_components))
 
     def _load_template(self):
-        template_path = path.join('address-formatter-templates', 'conf')
+        template_path = path.abspath(path.join(path.dirname(__file__), '..', 'address-formatter-templates', 'conf'))
         if not path.isdir(template_path):
             raise IOError('Address formatting templates path cannot be found.')
 
