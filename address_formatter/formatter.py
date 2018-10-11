@@ -13,7 +13,7 @@ VALID_REPLACEMENT_COMPONENTS = [
     'state'
 ]
 
-CONFIG = load_config(path.abspath(path.join(path.dirname(__file__), '..', 'address-formatter-templates', 'conf')))
+CONFIG = load_config(path.abspath(path.join(path.dirname(__file__), '..', 'address-formatting', 'conf')))
 
 
 def _dedup(splitter, input_string):

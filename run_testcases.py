@@ -2,7 +2,7 @@ import os
 import yaml
 from address_formatter import format
 
-path = os.path.join('address-formatter-templates', 'testcases', 'countries')
+path = os.path.join('address-formatting', 'testcases', 'countries')
 test_files = sorted(filter(os.path.isfile, [os.path.join(path, file) for file in os.listdir(path)]))
 for test_file in test_files:
     print('---------------------------')
