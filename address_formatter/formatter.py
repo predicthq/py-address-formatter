@@ -168,6 +168,10 @@ class Address:
         if kwargs:
             self._addr_components.update((k, str(kwargs[k])) for k in set(kwargs).intersection(all_known_components))
 
+        assert self._addr_components, \
+            'Address is empty, please set one or more of the following components: {}'.format(
+                ', '.join(sorted(all_known_components)))
+
     def _load_template(self):
         template_path = path.abspath(path.join(path.dirname(__file__), '..', 'address-formatter-templates', 'conf'))
         if not path.isdir(template_path):
