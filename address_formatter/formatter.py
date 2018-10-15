@@ -14,6 +14,7 @@ VALID_REPLACEMENT_COMPONENTS = [
 ]
 
 CONFIG = load_config(path.abspath(path.join(path.dirname(__file__), '..', 'address-formatting', 'conf')))
+KNOWN_COMPONENTS = sorted(list(CONFIG.components.keys()) + list(CONFIG.component_aliases.keys()))
 
 
 def _dedup(splitter, input_string):
@@ -28,16 +29,20 @@ def _sanity_clean_address(addr_components):
     if cleaned_addr_components.get('postcode') and len(cleaned_addr_components['postcode']) > 20:
         del cleaned_addr_components['postcode']
 
+    bad_components = []
     for k, v in cleaned_addr_components.items():
         if not v or re.match(r'https?:\/\/', v):
-            del cleaned_addr_components[k]
+            bad_components.append(k)
+
+    for k in bad_components:
+        del cleaned_addr_components[k]
 
     return cleaned_addr_components
 
 
 def _has_minimum_address_components(addr_components):
     min_threshold = 2
-    return sum([1 if addr_components.get(c) else 0 for c in REQUIRED_ADDRESS_COMPONENTS]) >= min_threshold
+    return sum([1 if not addr_components.get(c) else 0 for c in REQUIRED_ADDRESS_COMPONENTS]) < min_threshold
 
 
 def _fix_country(addr_components):
@@ -124,8 +129,7 @@ def _determine_country_code(addr_components):
             if matches:
                 component = matches[1]
                 new_country = re.sub(r'\$' + component, updated_addr_components.get(component, ''), new_country)
-
-                updated_addr_components['country'] = new_country
+            updated_addr_components['country'] = new_country
 
         if CONFIG.templates[old_country_code].get('add_component') and \
                 '=' in CONFIG.templates[old_country_code]['add_component']:
@@ -206,14 +210,11 @@ def _post_format_replace(text, replacements):
 
 
 def format(**components):
-    addr_components = {}
-    all_known_components = list(CONFIG.components.keys()) + list(CONFIG.component_aliases.keys())
-    if components:
-        addr_components.update((k, str(components[k])) for k in set(components).intersection(all_known_components))
+    addr_components = {k: str(v) for k, v in components.items()}
 
     assert addr_components, \
         'Address is empty, please set one or more of the following components: {}'.format(
-            ', '.join(sorted(all_known_components)))
+            ', '.join(KNOWN_COMPONENTS))
 
     country_code, addr_components = _determine_country_code(addr_components)
 
