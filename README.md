@@ -47,3 +47,10 @@ List of valid address components:
     suburb
     town
     village
+
+## Run test
+
+```bash
+pip install -r requirements/test.txt
+python -m pytest
+```

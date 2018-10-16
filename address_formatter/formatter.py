@@ -26,8 +26,14 @@ def _dedup(splitter, input_string):
 
 def _sanity_clean_address(addr_components):
     cleaned_addr_components = addr_components.copy()
-    if cleaned_addr_components.get('postcode') and len(cleaned_addr_components['postcode']) > 20:
-        del cleaned_addr_components['postcode']
+    if cleaned_addr_components.get('postcode'):
+        postcode = cleaned_addr_components['postcode']
+        if len(postcode) > 20 or re.match(r'\d+;\d+', postcode):
+            del cleaned_addr_components['postcode']
+        else:
+            matches = re.match('^(\d{5}),\d{5}', postcode)
+            if matches:
+                cleaned_addr_components['postcode'] = matches[1]
 
     bad_components = []
     for k, v in cleaned_addr_components.items():
@@ -61,14 +67,14 @@ def _apply_replacements(replacements, addr_component):
         return addr_component
 
     updated_addr_component = addr_component.copy()
-    for k, v in updated_addr_component.items():
+    for k in updated_addr_component.keys():
         for replacement in replacements:
             matches = re.match(r'^{}=(.+)'.format(k), replacement[0])
             if matches:
-                if matches[1] == v:
+                if matches[1] == updated_addr_component[k]:
                     updated_addr_component[k] = replacement[1]
             else:
-                updated_addr_component[k] = v.replace(*replacement)
+                updated_addr_component[k] = re.sub(replacement[0], replacement[1], updated_addr_component[k])
 
     return updated_addr_component
 
@@ -86,6 +92,48 @@ def _add_state_code(state_codes, addr_components):
         for k, v in state_codes[country_code].items():
             if updated_addr_components['state'].upper() == v.upper():
                 updated_addr_components['state_code'] = k
+
+    return updated_addr_components
+
+
+def _add_code(key, addr_components):
+    need_update = not addr_components.get(key + '_code') and addr_components.get(key) \
+                  and addr_components.get('country_code')
+
+    if not need_update:
+        return addr_components
+
+    updated_addr_components = addr_components.copy()
+    country_code = updated_addr_components['country_code']
+
+    code_mapping = {
+        'state': CONFIG.state_codes,
+        'county': CONFIG.county_codes
+    }
+
+    if not (key in code_mapping and country_code in code_mapping[key]):
+        return updated_addr_components
+
+    codes = code_mapping[key]
+    for k, v in codes[country_code].items():
+        if updated_addr_components[key].upper() == v.upper():
+            updated_addr_components[key + '_code'] = k
+
+    # try again for odd variants like "United States Virgin Islands"
+    if key == 'state' and not updated_addr_components.get('state_code') and country_code == 'US':
+        if re.match(r'^united states', updated_addr_components['state'], re.IGNORECASE):
+            state = re.sub(r'^united states', 'US', updated_addr_components['state'], re.IGNORECASE)
+            for k, v in CONFIG.state_codes[country_code]:
+                if state.upper() == v.upper():
+                    updated_addr_components['state_code'] = k
+                    break
+
+        if re.match(r'^washington,? d\.?c\.?', updated_addr_components['state'], re.IGNORECASE):
+            updated_addr_components.update({
+                'state_code': 'DC',
+                'state': 'District of Colombia',
+                'city': 'Washington'
+            })
 
     return updated_addr_components
 
@@ -155,6 +203,7 @@ def _clean_rendered(text):
     replacements = [
         (r'[\},\s]+$', ''),
         (r'^[,\s]+', ''),
+        (r'^- ', ''),           #  line starting with dash due to a parameter missing
         (r',\s*,', ', '),       # multiple commas to one
         (r'[\t ]+,[\t ]+', ', '),     # one horiz whitespace behind comma
         (r'[\t ][\t ]+', ' '),        # multiple horiz whitespace to one
@@ -244,7 +293,8 @@ def format(**components):
                              [
                                  _fix_country,
                                  partial(_apply_replacements, template.get('replace')),
-                                 partial(_add_state_code, CONFIG.state_codes),
+                                 partial(_add_code, 'state'),
+                                 partial(_add_code, 'county'),
                                  partial(_find_and_add_unknown_components, CONFIG.components, CONFIG.component_aliases)
                              ],
                              addr_components)

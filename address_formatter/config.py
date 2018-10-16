@@ -2,7 +2,7 @@ from os import path
 from namedlist import namedtuple
 import yaml
 
-Config = namedtuple('Config', ['components', 'component_aliases', 'templates', 'state_codes'])
+Config = namedtuple('Config', ['components', 'component_aliases', 'templates', 'state_codes', 'county_codes'])
 
 
 def load_config(template_path):
@@ -10,6 +10,7 @@ def load_config(template_path):
     components = {}
     component_aliases = {}
     state_codes = {}
+    county_codes = {}
 
     if not path.isdir(template_path):
         raise IOError('Address formatting templates path cannot be found.')
@@ -32,4 +33,8 @@ def load_config(template_path):
     with open(path.join(template_path, 'state_codes.yaml'), 'r') as ymlfile:
         state_codes = yaml.safe_load(ymlfile)
 
-    return Config(components, component_aliases, templates, state_codes)
+    # Parse county codes
+    with open(path.join(template_path, 'county_codes.yaml'), 'r') as ymlfile:
+        county_codes = yaml.safe_load(ymlfile)
+
+    return Config(components, component_aliases, templates, state_codes, county_codes)
