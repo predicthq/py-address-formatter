@@ -14,5 +14,9 @@ for test_file in test_files:
         for test_case in test_cases:
             print('Components: ' + str(test_case['components']))
             print('')
+            print('Expected:')
+            print(test_case['expected'])
+
+            print('Actual:')
             address = format(**test_case['components'])
             print(address)
